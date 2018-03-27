@@ -3,9 +3,9 @@ import org.jgroups.protocols.*;
 import org.jgroups.protocols.pbcast.*;
 import org.jgroups.stack.ProtocolStack;
 import org.jgroups.util.Util;
-
 import java.io.*;
 import java.net.InetAddress;
+import java.util.List;
 
 public class JGroupsController extends ReceiverAdapter {
     private StringMap stringMap = new StringMap();
@@ -22,13 +22,13 @@ public class JGroupsController extends ReceiverAdapter {
         jChannel.close();
     }
     private void setProtocol() throws Exception{
-        ProtocolStack stack=new ProtocolStack();
+        ProtocolStack stack = new ProtocolStack();
         jChannel.setProtocolStack(stack);
         stack.addProtocol(new UDP().setValue("mcast_group_addr", InetAddress.getByName("230.0.0.50")))
                 .addProtocol(new PING())
                 .addProtocol(new MERGE3())
                 .addProtocol(new FD_SOCK())
-                .addProtocol(new FD_ALL().setValue("timeout", 12000).setValue("interval", 3000))
+                .addProtocol(new FD_ALL().setValue("timeout", 1200).setValue("interval", 300))
                 .addProtocol(new VERIFY_SUSPECT())
                 .addProtocol(new BARRIER())
                 .addProtocol(new NAKACK2())
@@ -52,45 +52,88 @@ public class JGroupsController extends ReceiverAdapter {
                 String delimiter = "[ ]+";
                 String[] tokens = line.split(delimiter);
                 String operation = tokens[0].toLowerCase();
-                System.out.println("operation: " + operation);
-                if(operation.equals("c")){
+
+                if(operation.equals("contains") || operation.equals("c")){
                     String key = tokens[1];
-                    System.out.println("checking: key: " + key);
-                    System.out.println(stringMap.containsKey(key));
+                    System.out.println("key: " + key + ": " + stringMap.containsKey(key));
                 }
-                else if(operation.equals("g")) {
+                else if(operation.equals("get") || operation.equals("g")) {
                     String key = tokens[1];
-                    System.out.println("getting: key: " + key);
-                    System.out.println(stringMap.get(key));
+                    System.out.println("key: " + key + ", value: " + stringMap.get(key));
                 }
-                else if(operation.equals("p") || operation.equals("r")){
+                else if(operation.equals("put") || operation.equals("p") || operation.equals("remove") || operation.equals("r")){
                     line = "[" + userName + "] " + line;
                     Message msg = new Message(null, null, line);
                     jChannel.send(msg);
+                }
+                else if(line.startsWith("print")){
+                    printStringMap();
                 }
                 else if(line.startsWith("exit")){
                     break;
                 }
                 else{
-                    System.out.print("Type <'C','G','R'> <key> or <'P'> <key value> or 'exit'");
+                    System.out.println("Allowed commands: \n" +
+                            "'contains'/'c' <key> \n" +
+                            "'get'/'g' <key> \n" +
+                            "'put'/'p' <key> <value> \n" +
+                            "'remove'/'r' <key> \n" +
+                            "'print' \n" +
+                            "'exit' \n");
                 }
             }
-
+            catch (IndexOutOfBoundsException e){
+                System.out.println("Wrong request");
+            }
             catch(Exception e){
-
+                e.printStackTrace();
             }
         }
 
     }
     public void viewAccepted(View new_view) {
         System.out.println("** view: " + new_view);
+        handleView(jChannel, new_view);
+    }
+    private void handleView(JChannel channel, View newView){
+        if(newView instanceof MergeView){
+            ViewHandler handler = new ViewHandler(channel, (MergeView) newView);
+            handler.start();
+        }
+    }
+    private class ViewHandler extends Thread{
+        JChannel channel;
+        MergeView mergeView;
+
+        public ViewHandler(JChannel channel, MergeView mergeView) {
+            this.channel = channel;
+            this.mergeView = mergeView;
+        }
+        public void run(){
+            List<View> subgroups = mergeView.getSubgroups();
+            View tmp_view = subgroups.get(0); // picks the first
+            Address local_addr = channel.getAddress();
+            if(!tmp_view.getMembers().contains(local_addr)) {
+                System.out.println("Not member of the new primary partition ("
+                        + tmp_view + "), will re-acquire the state");
+                try {
+                    jChannel.getState(null, 30000);
+                }
+                catch(Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+            else {
+                System.out.println("Member of the new primary partition ("
+                        + tmp_view + "), will do nothing");
+            }
+        }
     }
 
-
     public void receive(Message msg) {
-        System.out.println("receiving");
-        String line = msg.getSrc() + ": " + msg.getObject();
-        System.out.println(line);
+        //System.out.println("receiving");
+        //String line = msg.getSrc() + ": " + msg.getObject();
+       // System.out.println(line);
 
         synchronized (stringMap){
             String delimiter = "[ ]+";
@@ -99,12 +142,12 @@ public class JGroupsController extends ReceiverAdapter {
             try{
                 String operation = tokens[1].toLowerCase();
                 String key = tokens[2];
-                if(operation.equals("p")){
+                if(operation.equals("put") || operation.equals("p")){
                     String value = tokens[3];
-                    System.out.println("putting: key: " + key + ", value: " + value);
+                    System.out.println("putting key: " + key + ", value: " + value);
                     stringMap.put(key, value);
                 }
-                else if(operation.equals("r")){
+                else if(operation.equals("remove") || operation.equals("r")){
                     System.out.println("removing: key: " + key);
                     stringMap.remove(key);
                 }
@@ -133,12 +176,11 @@ public class JGroupsController extends ReceiverAdapter {
         printStringMap();
     }
     public void printStringMap(){
-        System.out.println("stringMap: ");
+        System.out.println("stringMap contains: ");
         for(String key: stringMap.keySet()){
             System.out.println("key: " + key + ", value: " + stringMap.get(key));
         }
 
     }
-
 
 }
