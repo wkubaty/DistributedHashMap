@@ -101,7 +101,6 @@ public class JGroupsController extends ReceiverAdapter {
                 e.printStackTrace();
             }
         }
-
     }
 
     public void viewAccepted(View new_view) {
@@ -135,7 +134,6 @@ public class JGroupsController extends ReceiverAdapter {
                     Address address = tmp_view.getCoord();
                     System.out.println("Getting state from: " + address);
                     jChannel.getState(address, 30000);
-
                 }
                 catch(Exception ex) {
                     ex.printStackTrace();
@@ -173,21 +171,18 @@ public class JGroupsController extends ReceiverAdapter {
     }
 
     public void getState(OutputStream output) throws Exception {
-        //System.out.println("Getting state");
         synchronized(stringMap) {
             Util.objectToStream(stringMap, new DataOutputStream(output));
         }
     }
 
     public void setState(InputStream input) throws Exception{
-        //System.out.println("Setting state");
         StringMap map  = (StringMap) Util.objectFromStream(new DataInputStream(input));
         synchronized (stringMap){
             stringMap.clear();
             stringMap = map;
         }
         System.out.println("Got new state. Type 'print' to check it out!");
-        //printStringMap();
     }
 
     public void printStringMap(){
