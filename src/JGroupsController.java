@@ -10,7 +10,7 @@ import java.util.List;
 public class JGroupsController extends ReceiverAdapter {
     private StringMap stringMap = new StringMap();
     private JChannel jChannel;
-    private String userName = System.getProperty("user", "n/a");
+    private String userName = System.getProperty("user.name", "n/a");
 
     public void start() throws Exception{
         jChannel = new JChannel();
@@ -21,10 +21,11 @@ public class JGroupsController extends ReceiverAdapter {
         eventLoop();
         jChannel.close();
     }
+
     private void setProtocol() throws Exception{
         ProtocolStack stack = new ProtocolStack();
         jChannel.setProtocolStack(stack);
-        stack.addProtocol(new UDP().setValue("mcast_group_addr", InetAddress.getByName("230.0.0.50")))
+        stack.addProtocol(new UDP().setValue("mcast_group_addr", InetAddress.getByName("230.0.0.51")))
                 .addProtocol(new PING())
                 .addProtocol(new MERGE3())
                 .addProtocol(new FD_SOCK())
@@ -38,17 +39,20 @@ public class JGroupsController extends ReceiverAdapter {
                 .addProtocol(new UFC())
                 .addProtocol(new MFC())
                 .addProtocol(new FRAG2())
-                .addProtocol(new STATE_TRANSFER());
+                .addProtocol(new STATE_TRANSFER())
+                .addProtocol(new SEQUENCER())
+                .addProtocol(new FLUSH());
 
         stack.init();
     }
+
     private void eventLoop(){
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
-
+        String line = "";
         while (true){
             try {
                 System.out.println(">");
-                String line = in.readLine();
+                line = in.readLine();
                 String delimiter = "[ ]+";
                 String[] tokens = line.split(delimiter);
                 String operation = tokens[0].toLowerCase();
@@ -61,15 +65,23 @@ public class JGroupsController extends ReceiverAdapter {
                     String key = tokens[1];
                     System.out.println("key: " + key + ", value: " + stringMap.get(key));
                 }
-                else if(operation.equals("put") || operation.equals("p") || operation.equals("remove") || operation.equals("r")){
-                    line = "[" + userName + "] " + line;
+                else if(operation.equals("put") || operation.equals("p")) {
+                    String key = tokens[1];
+                    String value = tokens[2];
+                    line = "[" + userName + "] " + operation + " " + key + " " + value;
+                    Message msg = new Message(null, null, line);
+                    jChannel.send(msg);
+                }
+                else if(operation.equals("remove") || operation.equals("r")){
+                    String key = tokens[1];
+                    line = "[" + userName + "] " + operation + " " + key;
                     Message msg = new Message(null, null, line);
                     jChannel.send(msg);
                 }
                 else if(line.startsWith("print")){
                     printStringMap();
                 }
-                else if(line.startsWith("exit")){
+                else if(line.startsWith("exit") || line.startsWith("quit")){
                     break;
                 }
                 else{
@@ -83,7 +95,7 @@ public class JGroupsController extends ReceiverAdapter {
                 }
             }
             catch (IndexOutOfBoundsException e){
-                System.out.println("Wrong request");
+                System.out.println("Wrong request, Line: " + line);
             }
             catch(Exception e){
                 e.printStackTrace();
@@ -91,16 +103,19 @@ public class JGroupsController extends ReceiverAdapter {
         }
 
     }
+
     public void viewAccepted(View new_view) {
         System.out.println("** view: " + new_view);
         handleView(jChannel, new_view);
     }
+
     private void handleView(JChannel channel, View newView){
         if(newView instanceof MergeView){
             ViewHandler handler = new ViewHandler(channel, (MergeView) newView);
             handler.start();
         }
     }
+
     private class ViewHandler extends Thread{
         JChannel channel;
         MergeView mergeView;
@@ -114,26 +129,25 @@ public class JGroupsController extends ReceiverAdapter {
             View tmp_view = subgroups.get(0); // picks the first
             Address local_addr = channel.getAddress();
             if(!tmp_view.getMembers().contains(local_addr)) {
-                System.out.println("Not member of the new primary partition ("
-                        + tmp_view + "), will re-acquire the state");
+                System.out.println("Not member of the new primary partition (" + tmp_view + "), will re-acquire the state");
                 try {
-                    jChannel.getState(null, 30000);
+                    System.out.println("Tmp view: " + tmp_view);
+                    Address address = tmp_view.getCoord();
+                    System.out.println("Getting state from: " + address);
+                    jChannel.getState(address, 30000);
+
                 }
                 catch(Exception ex) {
                     ex.printStackTrace();
                 }
             }
             else {
-                System.out.println("Member of the new primary partition ("
-                        + tmp_view + "), will do nothing");
+                System.out.println("Member of the new primary partition ("+ tmp_view + "), will do nothing");
             }
         }
     }
 
     public void receive(Message msg) {
-        //System.out.println("receiving");
-        //String line = msg.getSrc() + ": " + msg.getObject();
-       // System.out.println(line);
 
         synchronized (stringMap){
             String delimiter = "[ ]+";
@@ -154,33 +168,37 @@ public class JGroupsController extends ReceiverAdapter {
             }
             catch (IndexOutOfBoundsException e){
                 System.out.println("Got wrong request: " + request);
-                return;
             }
-
         }
     }
+
     public void getState(OutputStream output) throws Exception {
-        System.out.println("Getting state");
+        //System.out.println("Getting state");
         synchronized(stringMap) {
             Util.objectToStream(stringMap, new DataOutputStream(output));
         }
-
     }
+
     public void setState(InputStream input) throws Exception{
-        System.out.println("Setting state");
+        //System.out.println("Setting state");
         StringMap map  = (StringMap) Util.objectFromStream(new DataInputStream(input));
         synchronized (stringMap){
             stringMap.clear();
             stringMap = map;
         }
-        printStringMap();
+        System.out.println("Got new state. Type 'print' to check it out!");
+        //printStringMap();
     }
+
     public void printStringMap(){
-        System.out.println("stringMap contains: ");
-        for(String key: stringMap.keySet()){
-            System.out.println("key: " + key + ", value: " + stringMap.get(key));
+        if(stringMap.isEmpty()){
+            System.out.println("'stringMap' is empty");
         }
-
+        else{
+            System.out.println("'stringMap' contains: ");
+            for(String key: stringMap.keySet()){
+                System.out.println("key: " + key + ", value: " + stringMap.get(key));
+            }
+        }
     }
-
 }

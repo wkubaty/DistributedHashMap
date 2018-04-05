@@ -31,8 +31,12 @@ public class StringMap implements SimpleStringMap, java.io.Serializable{
     public void clear(){
         hashMap.clear();
     }
+
     public Set<String> keySet(){
         return hashMap.keySet();
     }
 
+    public boolean isEmpty(){
+        return hashMap.isEmpty();
+    }
 }
